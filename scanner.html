@@ -1,0 +1,144 @@
+<!DOCTYPE html>
+<html lang="en">
+<head>
+  <meta charset="UTF-8" />
+  <meta name="viewport" content="width=device-width, initial-scale=1.0" />
+  <title>House of Ideas — Staff Check-In Scanner</title>
+  <script src="https://unpkg.com/html5-qrcode" type="text/javascript"></script>
+  <style>
+    * { box-sizing: border-box; font-family: system-ui, -apple-system, sans-serif; }
+    body { margin: 0; background: #17111F; color: #faf8fa; display: flex; flex-direction: column; align-items: center; min-height: 100vh; padding: 20px; }
+    h1 { font-size: 1.3rem; margin: 0 0 6px; color: #efeaf1; }
+    p.sub { margin: 0 0 20px; font-size: 0.85rem; color: #b8adc7; }
+    .card { width: 100%; max-width: 420px; background: #21192C; border: 1px solid rgba(239,234,241,0.18); border-radius: 16px; padding: 20px; box-shadow: 0 10px 30px rgba(0,0,0,0.4); }
+    input { width: 100%; padding: 12px; border-radius: 10px; border: 1px solid #483a5c; background: #17111F; color: #fff; font-size: 1rem; margin-bottom: 12px; }
+    button { width: 100%; padding: 12px; border-radius: 10px; border: none; background: #7c4dff; color: #fff; font-weight: 600; font-size: 1rem; cursor: pointer; }
+    button.secondary { background: #322742; margin-top: 10px; }
+    #reader { width: 100%; border-radius: 12px; overflow: hidden; margin-top: 10px; }
+    .status-box { margin-top: 16px; padding: 16px; border-radius: 12px; text-align: center; display: none; }
+    .valid { background: #14452f; border: 1px solid #2ecc71; color: #d4f8e8; }
+    .warn  { background: #5c4312; border: 1px solid #f1c40f; color: #fcf3cf; }
+    .error { background: #591c21; border: 1px solid #e74c3c; color: #fadbd8; }
+    .status-title { font-size: 1.2rem; font-weight: 700; margin-bottom: 4px; }
+    .attendee-name { font-size: 1.05rem; font-weight: 600; }
+    .attendee-email { font-size: 0.85rem; opacity: 0.85; }
+  </style>
+</head>
+<body>
+  <h1>House of Ideas — Door Scanner</h1>
+  <p class="sub">Authorized Staff Check-In Only</p>
+
+  <!-- PIN LOGIN -->
+  <div class="card" id="login-card">
+    <label style="display:block; margin-bottom:8px; font-size:0.9rem;">Enter Staff Check-In PIN</label>
+    <input type="password" id="pin-input" placeholder="Staff PIN..." />
+    <button onclick="unlockScanner()">Unlock Scanner</button>
+  </div>
+
+  <!-- SCANNER VIEW -->
+  <div class="card" id="scanner-card" style="display:none;">
+    <div id="reader"></div>
+    <div id="result" class="status-box">
+      <div class="status-title" id="res-title"></div>
+      <div class="attendee-name" id="res-name"></div>
+      <div class="attendee-email" id="res-email"></div>
+    </div>
+    <button class="secondary" id="next-btn" style="display:none;" onclick="resumeScan()">Scan Next Ticket</button>
+  </div>
+
+  <script>
+    const CHECKIN_API = "https://uptlgxgakoqfrztnfwok.supabase.co/functions/v1/scan-checkin";
+    let staffPin = sessionStorage.getItem("hoi_pin") || "";
+    let html5QrCode;
+    let isProcessing = false;
+
+    if (staffPin) startScanner();
+
+    function unlockScanner() {
+      const val = document.getElementById("pin-input").value.trim();
+      if (!val) return;
+      staffPin = val;
+      sessionStorage.setItem("hoi_pin", val);
+      startScanner();
+    }
+
+    function startScanner() {
+      document.getElementById("login-card").style.display = "none";
+      document.getElementById("scanner-card").style.display = "block";
+
+      html5QrCode = new Html5Qrcode("reader");
+      html5QrCode.start(
+        { facingMode: "environment" },
+        { fps: 10, qrbox: { width: 230, height: 230 } },
+        onScanSuccess
+      ).catch(err => alert("Camera permission error: " + err));
+    }
+
+    async function onScanSuccess(decodedText) {
+      if (isProcessing) return;
+      isProcessing = true;
+      html5QrCode.pause();
+
+      const resBox = document.getElementById("result");
+      const titleEl = document.getElementById("res-title");
+      const nameEl = document.getElementById("res-name");
+      const emailEl = document.getElementById("res-email");
+
+      resBox.style.display = "block";
+      resBox.className = "status-box";
+      titleEl.textContent = "Verifying ticket...";
+      nameEl.textContent = "";
+      emailEl.textContent = "";
+
+      try {
+        const response = await fetch(CHECKIN_API, {
+          method: "POST",
+          headers: {
+            "Content-Type": "application/json",
+            "x-scanner-pin": staffPin
+          },
+          body: JSON.stringify({ token: decodedText })
+        });
+
+        const data = await response.json();
+
+        if (response.status === 401) {
+          sessionStorage.removeItem("hoi_pin");
+          alert("Wrong Staff PIN! Please re-enter.");
+          location.reload();
+          return;
+        }
+
+        if (data.status === "valid") {
+          resBox.className = "status-box valid";
+          titleEl.textContent = "VALID PASS — WELCOME";
+          nameEl.textContent = data.attendee.full_name || "Registered Attendee";
+          emailEl.textContent = data.attendee.email;
+        } else if (data.status === "already_checked_in") {
+          resBox.className = "status-box warn";
+          titleEl.textContent = "ALREADY SCANNED";
+          nameEl.textContent = data.attendee.full_name || "Registered Attendee";
+          emailEl.textContent = `Checked in at ${new Date(data.attendee.checked_in_at).toLocaleTimeString()}`;
+        } else {
+          resBox.className = "status-box error";
+          titleEl.textContent = "INVALID TICKET";
+          nameEl.textContent = data.message || "Unrecognized QR code";
+        }
+      } catch (err) {
+        resBox.className = "status-box error";
+        titleEl.textContent = "NETWORK ERROR";
+        nameEl.textContent = "Check internet connection";
+      }
+
+      document.getElementById("next-btn").style.display = "block";
+    }
+
+    function resumeScan() {
+      document.getElementById("result").style.display = "none";
+      document.getElementById("next-btn").style.display = "none";
+      isProcessing = false;
+      html5QrCode.resume();
+    }
+  </script>
+</body>
+</html>
