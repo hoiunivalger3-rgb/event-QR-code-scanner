@@ -112,12 +112,12 @@
         if (data.status === "valid") {
           resBox.className = "status-box valid";
           titleEl.textContent = "VALID PASS — WELCOME";
-          nameEl.textContent = data.attendee.full_name || "Registered Attendee";
-          emailEl.textContent = data.attendee.email;
+          nameEl.textContent = data.attendee.Full_name || "Registered Attendee";
+          emailEl.textContent = data.attendee.Email;
         } else if (data.status === "already_checked_in") {
           resBox.className = "status-box warn";
           titleEl.textContent = "ALREADY SCANNED";
-          nameEl.textContent = data.attendee.full_name || "Registered Attendee";
+          nameEl.textContent = data.attendee.Full_name || "Registered Attendee";
           emailEl.textContent = `Checked in at ${new Date(data.attendee.checked_in_at).toLocaleTimeString()}`;
         } else {
           resBox.className = "status-box error";
