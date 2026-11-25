@@ -13,7 +13,9 @@
     .card { width: 100%; max-width: 420px; background: #21192C; border: 1px solid rgba(239,234,241,0.18); border-radius: 16px; padding: 20px; box-shadow: 0 10px 30px rgba(0,0,0,0.4); }
     input { width: 100%; padding: 12px; border-radius: 10px; border: 1px solid #483a5c; background: #17111F; color: #fff; font-size: 1rem; margin-bottom: 12px; }
     button { width: 100%; padding: 12px; border-radius: 10px; border: none; background: #7c4dff; color: #fff; font-weight: 600; font-size: 1rem; cursor: pointer; }
+    button:disabled { opacity: 0.6; cursor: not-allowed; }
     button.secondary { background: #322742; margin-top: 10px; }
+    .login-error { margin-top: 12px; padding: 10px 12px; border-radius: 10px; background: #591c21; border: 1px solid #e74c3c; color: #fadbd8; font-size: 0.9rem; display: none; }
     #reader { width: 100%; border-radius: 12px; overflow: hidden; margin-top: 10px; }
     .status-box { margin-top: 16px; padding: 16px; border-radius: 12px; text-align: center; display: none; }
     .valid { background: #14452f; border: 1px solid #2ecc71; color: #d4f8e8; }
@@ -30,9 +32,10 @@
 
   <!-- PIN LOGIN -->
   <div class="card" id="login-card">
-    <label style="display:block; margin-bottom:8px; font-size:0.9rem;">Enter Staff Check-In PIN</label>
+    <label for="pin-input" style="display:block; margin-bottom:8px; font-size:0.9rem;">Enter Staff Check-In PIN</label>
     <input type="password" id="pin-input" placeholder="Staff PIN..." />
-    <button onclick="unlockScanner()">Unlock Scanner</button>
+    <button id="unlock-btn" onclick="unlockScanner()">Unlock Scanner</button>
+    <div id="login-error" class="login-error"></div>
   </div>
 
   <!-- SCANNER VIEW -->
@@ -52,14 +55,84 @@
     let html5QrCode;
     let isProcessing = false;
 
-    if (staffPin) startScanner();
+    if (staffPin) {
+      verifyPinAndStart(staffPin, true);
+    }
+
+    function showLoginError(message) {
+      const errEl = document.getElementById("login-error");
+      errEl.textContent = message;
+      errEl.style.display = "block";
+    }
+
+    function clearLoginError() {
+      const errEl = document.getElementById("login-error");
+      errEl.textContent = "";
+      errEl.style.display = "none";
+    }
+
+    async function verifyPin(pin) {
+      const response = await fetch(CHECKIN_API, {
+        method: "POST",
+        headers: {
+          "Content-Type": "application/json",
+          "x-scanner-pin": pin
+        },
+        // Probe with an empty token so the backend validates the PIN first
+        // without marking a real ticket as checked in
+        body: JSON.stringify({ token: "", pin_check: true })
+      });
+
+      if (response.status === 401) {
+        return { ok: false, message: "Wrong Staff PIN. Please try again." };
+      }
+
+      // Any non-401 response means the PIN passed authentication
+      return { ok: true };
+    }
+
+    async function verifyPinAndStart(pin, fromSession = false) {
+      const btn = document.getElementById("unlock-btn");
+      clearLoginError();
+      btn.disabled = true;
+      btn.textContent = "Verifying PIN...";
+
+      try {
+        const check = await verifyPin(pin);
+        if (!check.ok) {
+          sessionStorage.removeItem("hoi_pin");
+          staffPin = "";
+          if (!fromSession) {
+            showLoginError(check.message);
+          }
+          btn.disabled = false;
+          btn.textContent = "Unlock Scanner";
+          return;
+        }
+
+        staffPin = pin;
+        sessionStorage.setItem("hoi_pin", pin);
+        startScanner();
+      } catch (err) {
+        if (fromSession) {
+          // Keep stored PIN if offline on reload, or clear if invalid
+          sessionStorage.removeItem("hoi_pin");
+          staffPin = "";
+        }
+        showLoginError("Could not verify PIN. Check your internet connection.");
+        btn.disabled = false;
+        btn.textContent = "Unlock Scanner";
+      }
+    }
 
     function unlockScanner() {
       const val = document.getElementById("pin-input").value.trim();
-      if (!val) return;
-      staffPin = val;
-      sessionStorage.setItem("hoi_pin", val);
-      startScanner();
+      clearLoginError();
+      if (!val) {
+        showLoginError("Please enter the Staff PIN first.");
+        return;
+      }
+      verifyPinAndStart(val, false);
     }
 
     function startScanner() {
@@ -71,7 +144,13 @@
         { facingMode: "environment" },
         { fps: 10, qrbox: { width: 230, height: 230 } },
         onScanSuccess
-      ).catch(err => alert("Camera permission error: " + err));
+      ).catch(err => {
+        document.getElementById("scanner-card").style.display = "none";
+        document.getElementById("login-card").style.display = "block";
+        document.getElementById("unlock-btn").disabled = false;
+        document.getElementById("unlock-btn").textContent = "Unlock Scanner";
+        showLoginError("Camera permission error: " + err);
+      });
     }
 
     async function onScanSuccess(decodedText) {
